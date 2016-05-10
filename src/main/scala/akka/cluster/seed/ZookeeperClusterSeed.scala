@@ -26,7 +26,8 @@ class ZookeeperClusterSeed(system: ExtendedActorSystem) extends Extension {
 
   val settings = new ZookeeperClusterSeedSettings(system)
 
-  val selfAddress = Cluster(system).selfAddress
+  private val clusterSystem = Cluster(system)
+  val selfAddress = clusterSystem.selfAddress
   val address = if (settings.host.nonEmpty && settings.port.nonEmpty) {
     system.log.info(s"host:port read from environment variables=${settings.host}:${settings.port}")
     selfAddress.copy(host = settings.host, port = settings.port)
@@ -59,22 +60,25 @@ class ZookeeperClusterSeed(system: ExtendedActorSystem) extends Extension {
 
   private val latch = new LeaderLatch(client, path, myId)
 
-  system.registerOnTermination {
-    import scala.util.control.Exception._
-    ignoring(classOf[IllegalStateException]) {
-      latch.close()
-    }
-    ignoring(classOf[IllegalStateException]) {
-      client.close()
-    }
-  }
-
   def join(): Unit = {
     createPathIfNeeded()
     latch.start()
     while (!tryJoin()) {
       system.log.error("component=zookeeper-cluster-seed at=try-join-failed id={}", myId)
       Thread.sleep(1000)
+    }
+
+    import scala.util.control.Exception._
+    clusterSystem.registerOnMemberRemoved {
+      ignoring(classOf[IllegalStateException]) {
+        latch.close()
+      }
+    }
+
+    system.registerOnTermination {
+      ignoring(classOf[IllegalStateException]) {
+        client.close()
+      }
     }
   }
 
